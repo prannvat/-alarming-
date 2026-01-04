@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:alarm/alarm.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/services/alarm_sound_service.dart';
 import '../../../core/services/alarm_manager_service.dart';
+import '../../alarm/providers/alarm_provider.dart';
 import '../services/math_challenge.dart';
 
-class MathChallengeScreen extends StatefulWidget {
+class MathChallengeScreen extends ConsumerStatefulWidget {
   final String difficulty;
   final String alarmId;
 
@@ -16,10 +19,10 @@ class MathChallengeScreen extends StatefulWidget {
   });
 
   @override
-  State<MathChallengeScreen> createState() => _MathChallengeScreenState();
+  ConsumerState<MathChallengeScreen> createState() => _MathChallengeScreenState();
 }
 
-class _MathChallengeScreenState extends State<MathChallengeScreen> {
+class _MathChallengeScreenState extends ConsumerState<MathChallengeScreen> {
   late List<MathQuestion> _questions;
   int _currentQuestionIndex = 0;
   int _correctAnswers = 0;
@@ -40,6 +43,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
     final userAnswerInt = int.tryParse(_userAnswer);
 
     if (userAnswerInt == null) {
+      HapticFeedback.heavyImpact();
       setState(() {
         _isAnswerWrong = true;
       });
@@ -48,6 +52,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
 
     if (userAnswerInt == currentQuestion.answer) {
       // Correct answer
+      HapticFeedback.mediumImpact();
       setState(() {
         _correctAnswers++;
         _isAnswerWrong = false;
@@ -61,6 +66,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
       });
     } else {
       // Wrong answer
+      HapticFeedback.heavyImpact();
       setState(() {
         _isAnswerWrong = true;
       });
@@ -71,12 +77,37 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
     // Stop the alarm sound when challenge is completed
     AlarmManagerService().dismissCurrentAlarm();
     
+    // Stop native alarm and disable if non-repeating
+    try {
+      final repository = ref.read(alarmRepositoryProvider);
+      final alarm = await repository.getAlarm(widget.alarmId);
+      
+      if (alarm != null) {
+        final nativeAlarmId = int.parse(alarm.id.substring(0, 9));
+        await Alarm.stop(nativeAlarmId);
+        print('🔇 Stopped native alarm after challenge: $nativeAlarmId');
+        
+        // If alarm is not repeating, disable it
+        final isRepeating = alarm.repeatDays.any((day) => day);
+        print('🔍 Alarm repeating: $isRepeating (repeatDays: ${alarm.repeatDays})');
+        
+        if (!isRepeating) {
+          print('🔕 One-time alarm completed challenge, disabling...');
+          await repository.updateAlarm(alarm.copyWith(isEnabled: false));
+        } else {
+          print('🔁 Repeating alarm completed challenge, will ring again on next scheduled day');
+        }
+      }
+    } catch (e) {
+      print('Error stopping alarm: $e');
+    }
+    
     final completionTime = DateTime.now().difference(_startTime);
     final points = _calculatePoints(completionTime);
 
     // Navigate to completion screen
     if (mounted) {
-      context.pushReplacement(
+      context.go(
         '/challenge/complete',
         extra: {
           'completionTime': completionTime.inSeconds,
@@ -102,6 +133,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
   }
 
   void _addDigit(String digit) {
+    HapticFeedback.lightImpact();
     setState(() {
       _userAnswer += digit;
       _isAnswerWrong = false;
@@ -109,6 +141,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
   }
 
   void _clear() {
+    HapticFeedback.mediumImpact();
     setState(() {
       _userAnswer = '';
       _isAnswerWrong = false;
@@ -117,6 +150,7 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
 
   void _backspace() {
     if (_userAnswer.isNotEmpty) {
+      HapticFeedback.lightImpact();
       setState(() {
         _userAnswer = _userAnswer.substring(0, _userAnswer.length - 1);
         _isAnswerWrong = false;
@@ -134,6 +168,15 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
     });
   }
 
+  String _formatQuestion(String question) {
+    return question
+        .replaceAll('*', '×')
+        .replaceAll('/', '÷')
+        .replaceAll('+', ' + ')
+        .replaceAll('-', ' - ')
+        .replaceAll('  ', ' ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentQuestion = _questions[_currentQuestionIndex];
@@ -143,123 +186,88 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
       backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
           child: Column(
             children: [
               // Timer
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                 decoration: BoxDecoration(
                   color: AppTheme.surface,
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.5),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.timer, color: AppTheme.primary),
+                    const Icon(Icons.timer, color: AppTheme.primary, size: 16),
                     const SizedBox(width: 8),
                     Text(
                       '${elapsedTime}s',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      style: const TextStyle(
                         color: AppTheme.primary,
                         fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
                     ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 24),
+              const Spacer(),
 
-              // Question
-              Expanded(
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [AppTheme.surface, AppTheme.surface.withOpacity(0.8)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+              // Question Area
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Solve to dismiss',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary.withOpacity(0.7),
+                      fontSize: 14,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w500,
                     ),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
+                  ),
+                  const SizedBox(height: 24),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '${_formatQuestion(currentQuestion.question)} = ?',
+                      style: const TextStyle(
+                        fontSize: 56,
+                        fontWeight: FontWeight.w300,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    height: 70,
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
                       color: _isAnswerWrong
-                          ? AppTheme.error
-                          : AppTheme.primary.withOpacity(0.3),
-                      width: 2,
+                          ? AppTheme.error.withOpacity(0.1)
+                          : AppTheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _isAnswerWrong ? AppTheme.error : Colors.transparent,
+                        width: 1,
+                      ),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _isAnswerWrong 
-                            ? AppTheme.error.withOpacity(0.2) 
-                            : AppTheme.primary.withOpacity(0.1),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
+                    child: Text(
+                      _userAnswer.isEmpty ? '?' : _userAnswer,
+                      style: TextStyle(
+                        fontSize: 40,
+                        fontWeight: FontWeight.bold,
+                        color: _isAnswerWrong ? AppTheme.error : AppTheme.primary,
                       ),
-                    ],
+                    ),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Solve to dismiss',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: AppTheme.textSecondary,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          '${currentQuestion.question} = ?',
-                          style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                            fontSize: 56,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 24,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _isAnswerWrong
-                              ? AppTheme.error.withOpacity(0.1)
-                              : Colors.black.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: _isAnswerWrong ? AppTheme.error : Colors.transparent,
-                          ),
-                        ),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            _userAnswer.isEmpty ? '?' : _userAnswer,
-                            style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                              fontSize: 48,
-                              color: _isAnswerWrong ? AppTheme.error : AppTheme.textPrimary,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                ],
               ),
 
-              const SizedBox(height: 24),
+              const Spacer(),
 
               // Progress
               Row(
@@ -268,13 +276,13 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
                   return AnimatedContainer(
                     duration: const Duration(milliseconds: 300),
                     margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: index == _currentQuestionIndex ? 24 : 12,
-                    height: 12,
+                    width: index == _currentQuestionIndex ? 24 : 8,
+                    height: 8,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(4),
                       color: index <= _currentQuestionIndex
                           ? AppTheme.primary
-                          : AppTheme.textSecondary.withOpacity(0.3),
+                          : AppTheme.surface,
                     ),
                   );
                 }),
@@ -283,7 +291,10 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
               const SizedBox(height: 24),
 
               // Number Pad
-              _buildNumberPad(),
+              Expanded(
+                flex: 5,
+                child: _buildNumberPad(),
+              ),
             ],
           ),
         ),
@@ -294,46 +305,57 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
   Widget _buildNumberPad() {
     return Column(
       children: [
-        Row(
-          children: [
-            _buildNumberButton('1'),
-            _buildNumberButton('2'),
-            _buildNumberButton('3'),
-          ],
+        Expanded(
+          child: Row(
+            children: [
+              _buildNumberButton('1'),
+              _buildNumberButton('2'),
+              _buildNumberButton('3'),
+            ],
+          ),
         ),
-        Row(
-          children: [
-            _buildNumberButton('4'),
-            _buildNumberButton('5'),
-            _buildNumberButton('6'),
-          ],
+        Expanded(
+          child: Row(
+            children: [
+              _buildNumberButton('4'),
+              _buildNumberButton('5'),
+              _buildNumberButton('6'),
+            ],
+          ),
         ),
-        Row(
-          children: [
-            _buildNumberButton('7'),
-            _buildNumberButton('8'),
-            _buildNumberButton('9'),
-          ],
+        Expanded(
+          child: Row(
+            children: [
+              _buildNumberButton('7'),
+              _buildNumberButton('8'),
+              _buildNumberButton('9'),
+            ],
+          ),
         ),
-        Row(
-          children: [
-            _buildActionButton('±', _toggleNegative),
-            _buildNumberButton('0'),
-            _buildActionButton('⌫', _backspace),
-          ],
+        Expanded(
+          child: Row(
+            children: [
+              _buildActionButton('±', _toggleNegative),
+              _buildNumberButton('0'),
+              _buildActionButton('⌫', _backspace),
+            ],
+          ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _buildActionButton('Clear', _clear, isPrimary: false),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: _buildActionButton('Submit', _submitAnswer, isPrimary: true),
-            ),
-          ],
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 64,
+          child: Row(
+            children: [
+              Expanded(
+                child: _buildActionButton('Clear', _clear, isPrimary: false),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                flex: 2,
+                child: _buildActionButton('Submit', _submitAnswer, isPrimary: true),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -341,28 +363,21 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
 
   Widget _buildNumberButton(String number) {
     return Expanded(
-      child: AspectRatio(
-        aspectRatio: 1.3,
-        child: GestureDetector(
-          onTap: () => _addDigit(number),
-          child: Container(
-            margin: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
+      child: Padding(
+        padding: const EdgeInsets.all(6.0),
+        child: Material(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(40), // Circular/Oval buttons
+          child: InkWell(
+            onTap: () => _addDigit(number),
+            borderRadius: BorderRadius.circular(40),
             child: Center(
               child: Text(
                 number,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w400,
+                  color: AppTheme.textPrimary,
                 ),
               ),
             ),
@@ -373,37 +388,24 @@ class _MathChallengeScreenState extends State<MathChallengeScreen> {
   }
 
   Widget _buildActionButton(String label, VoidCallback onTap, {bool isPrimary = false}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 60, // Fixed height for bottom actions
-        margin: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          gradient: isPrimary 
-              ? const LinearGradient(
-                  colors: [AppTheme.primary, Color(0xFFFFB340)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: isPrimary ? null : AppTheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: isPrimary 
-                  ? AppTheme.primary.withOpacity(0.3) 
-                  : Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: isPrimary ? Colors.white : AppTheme.textPrimary,
-              fontWeight: FontWeight.bold,
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(6.0),
+        child: Material(
+          color: isPrimary ? AppTheme.primary : AppTheme.surface,
+          borderRadius: BorderRadius.circular(40),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(40),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: isPrimary ? 20 : 24,
+                  fontWeight: isPrimary ? FontWeight.bold : FontWeight.w400,
+                  color: isPrimary ? Colors.white : AppTheme.textPrimary,
+                ),
+              ),
             ),
           ),
         ),

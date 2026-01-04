@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/notification_permission_handler.dart';
 import '../../../core/services/daily_challenge_service.dart';
 import '../../../core/services/custom_sound_service.dart';
+import '../../challenge/providers/challenge_cooldown_provider.dart';
 import '../models/alarm_model.dart';
 import '../providers/alarm_provider.dart';
 import 'sound_picker_screen.dart';
@@ -414,6 +415,74 @@ class _CreateAlarmScreenState extends ConsumerState<CreateAlarmScreen> {
                 ),
                 
                 if (_isChallenge) ...[
+                  // Cooldown warning banner
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final pointsAvailableAsync = ref.watch(challengePointsAvailableProvider);
+                      final cooldownStringAsync = ref.watch(challengeCooldownStringProvider);
+                      
+                      return pointsAvailableAsync.when(
+                        data: (pointsAvailable) {
+                          if (pointsAvailable) {
+                            return const SizedBox.shrink();
+                          }
+                          
+                          return cooldownStringAsync.when(
+                            data: (cooldownString) => Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.orange.withOpacity(0.3),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.info_outline,
+                                    color: Colors.orange,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Points on Cooldown',
+                                          style: TextStyle(
+                                            color: Colors.orange,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'No points until $cooldownString',
+                                          style: TextStyle(
+                                            color: Colors.orange.withOpacity(0.9),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            loading: () => const SizedBox.shrink(),
+                            error: (_, __) => const SizedBox.shrink(),
+                          );
+                        },
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, __) => const SizedBox.shrink(),
+                      );
+                    },
+                  ),
+                  
                   const Divider(height: 1, color: Color(0xFF3A3A3C), indent: 16),
                   Padding(
                     padding: const EdgeInsets.all(16),

@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:alarm/alarm.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/services/alarm_manager_service.dart';
+import '../../alarm/providers/alarm_provider.dart';
 import '../services/general_knowledge_challenge.dart';
 
-class GeneralKnowledgeChallengeScreen extends StatefulWidget {
+class GeneralKnowledgeChallengeScreen extends ConsumerStatefulWidget {
   final String difficulty;
   final String alarmId;
 
@@ -17,10 +20,10 @@ class GeneralKnowledgeChallengeScreen extends StatefulWidget {
   });
 
   @override
-  State<GeneralKnowledgeChallengeScreen> createState() => _GeneralKnowledgeChallengeScreenState();
+  ConsumerState<GeneralKnowledgeChallengeScreen> createState() => _GeneralKnowledgeChallengeScreenState();
 }
 
-class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChallengeScreen> {
+class _GeneralKnowledgeChallengeScreenState extends ConsumerState<GeneralKnowledgeChallengeScreen> {
   late List<GeneralKnowledgeQuestion> _questions;
   int _currentQuestionIndex = 0;
   int _correctAnswers = 0;
@@ -42,6 +45,12 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
 
     final currentQuestion = _questions[_currentQuestionIndex];
     final isCorrect = optionIndex == currentQuestion.correctIndex;
+
+    if (isCorrect) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
 
     setState(() {
       _hasAnswered = true;
@@ -67,15 +76,37 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
 
   void _completeChallenge() async {
     // Stop the alarm
-    final nativeAlarmId = int.parse(widget.alarmId.substring(0, 9));
-    await Alarm.stop(nativeAlarmId);
+    if (widget.alarmId != 'debug_alarm') {
+      try {
+        final nativeAlarmId = int.parse(widget.alarmId.substring(0, 9));
+        await Alarm.stop(nativeAlarmId);
+      } catch (e) {
+        debugPrint('Error stopping native alarm: $e');
+      }
+    }
     AlarmManagerService().dismissCurrentAlarm();
+
+    // Auto-disable non-repeating alarms
+    try {
+      final alarmRepository = ref.read(alarmRepositoryProvider);
+      final alarm = await alarmRepository.getAlarm(widget.alarmId);
+      
+      if (alarm != null) {
+        final isRepeating = alarm.repeatDays.any((day) => day);
+        if (!isRepeating && alarm.isEnabled) {
+          await alarmRepository.updateAlarm(alarm.copyWith(isEnabled: false));
+          debugPrint('Auto-disabled non-repeating alarm after general knowledge challenge');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error auto-disabling alarm: $e');
+    }
 
     final completionTime = DateTime.now().difference(_startTime);
     final points = _calculatePoints(completionTime);
 
     if (mounted) {
-      context.pushReplacement(
+      context.go(
         '/challenge/complete',
         extra: {
           'completionTime': completionTime.inSeconds,
@@ -108,48 +139,51 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
     final elapsedTime = DateTime.now().difference(_startTime).inSeconds;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A), // Deep Blue/Slate
+      backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(20),
           child: Column(
             children: [
               // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.school_rounded, color: AppTheme.primary, size: 32),
+                    const SizedBox(width: 12),
+                    Text(
+                      'QUIZ',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: AppTheme.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 4,
+                      ),
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.timer, color: AppTheme.primary, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${elapsedTime}s',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '${_currentQuestionIndex + 1}/${_questions.length}',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
 
-              const SizedBox(height: 40),
+              const SizedBox(height: 10),
+
+              // Stats Row
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStat(Icons.timer_outlined, '${elapsedTime}s'),
+                    _buildStat(Icons.quiz_outlined, '${_currentQuestionIndex + 1}/${_questions.length}'),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
 
               // Question Card
               Expanded(
@@ -158,21 +192,17 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                   width: double.infinity,
                   padding: const EdgeInsets.all(32),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                    color: AppTheme.surface,
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
+                        color: Colors.black.withOpacity(0.2),
                         blurRadius: 12,
                         offset: const Offset(0, 6),
                       ),
                     ],
                     border: Border.all(
-                      color: Colors.white.withOpacity(0.1),
+                      color: AppTheme.textSecondary.withOpacity(0.1),
                       width: 1,
                     ),
                   ),
@@ -181,10 +211,10 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                       child: Text(
                         currentQuestion.question,
                         style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
+                          color: AppTheme.textPrimary,
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
-                          height: 1.3,
+                          height: 1.4,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -193,7 +223,7 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                 ),
               ),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
 
               // Options
               Expanded(
@@ -203,8 +233,9 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                     final isSelected = _selectedOptionIndex == index;
                     final isCorrect = index == currentQuestion.correctIndex;
                     
-                    Color backgroundColor = Colors.white.withOpacity(0.05);
-                    Color borderColor = Colors.white.withOpacity(0.1);
+                    Color backgroundColor = AppTheme.surface;
+                    Color borderColor = AppTheme.textSecondary.withOpacity(0.1);
+                    Color textColor = AppTheme.textPrimary;
                     
                     if (_hasAnswered) {
                       if (isSelected) {
@@ -212,10 +243,12 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                             ? AppTheme.success.withOpacity(0.2)
                             : AppTheme.error.withOpacity(0.2);
                         borderColor = isCorrect ? AppTheme.success : AppTheme.error;
+                        textColor = isCorrect ? AppTheme.success : AppTheme.error;
                       } else if (isCorrect) {
                         // Show correct answer if user picked wrong
                         backgroundColor = AppTheme.success.withOpacity(0.2);
                         borderColor = AppTheme.success;
+                        textColor = AppTheme.success;
                       }
                     }
 
@@ -240,13 +273,20 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                                   height: 32,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    color: Colors.white.withOpacity(0.1),
+                                    color: AppTheme.background,
+                                    border: Border.all(
+                                      color: isSelected || (_hasAnswered && isCorrect) 
+                                          ? borderColor 
+                                          : AppTheme.textSecondary.withOpacity(0.3),
+                                    ),
                                   ),
                                   child: Center(
                                     child: Text(
                                       String.fromCharCode(65 + index), // A, B, C, D
-                                      style: const TextStyle(
-                                        color: Colors.white70,
+                                      style: TextStyle(
+                                        color: isSelected || (_hasAnswered && isCorrect) 
+                                            ? textColor 
+                                            : AppTheme.textSecondary,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -256,8 +296,8 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
                                 Expanded(
                                   child: Text(
                                     currentQuestion.options[index],
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: textColor,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -283,6 +323,23 @@ class _GeneralKnowledgeChallengeScreenState extends State<GeneralKnowledgeChalle
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStat(IconData icon, String value) {
+    return Column(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 24),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
     );
   }
 }

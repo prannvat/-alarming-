@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:alarm/alarm.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/services/alarm_manager_service.dart';
+import '../../alarm/providers/alarm_provider.dart';
 import '../services/wordle_challenge.dart';
+import '../services/wordle_dictionary.dart';
+import '../services/dictionary_service.dart';
 
-class WordleChallengeScreen extends StatefulWidget {
+class WordleChallengeScreen extends ConsumerStatefulWidget {
   final String difficulty;
   final String alarmId;
 
@@ -16,16 +21,17 @@ class WordleChallengeScreen extends StatefulWidget {
   });
 
   @override
-  State<WordleChallengeScreen> createState() => _WordleChallengeScreenState();
+  ConsumerState<WordleChallengeScreen> createState() => _WordleChallengeScreenState();
 }
 
-class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
+class _WordleChallengeScreenState extends ConsumerState<WordleChallengeScreen> {
   late WordleChallenge _challenge;
   late DateTime _startTime;
   final List<String> _guesses = [];
   String _currentGuess = '';
   bool _isGameOver = false;
   bool _hasWon = false;
+  bool _isValidating = false;
   String? _errorMessage;
 
   @override
@@ -36,7 +42,8 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
   }
 
   void _addLetter(String letter) {
-    if (_currentGuess.length < _challenge.wordLength && !_isGameOver) {
+    if (_currentGuess.length < _challenge.wordLength && !_isGameOver && !_isValidating) {
+      HapticFeedback.lightImpact();
       setState(() {
         _currentGuess += letter.toUpperCase();
         _errorMessage = null;
@@ -45,7 +52,8 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
   }
 
   void _removeLetter() {
-    if (_currentGuess.isNotEmpty && !_isGameOver) {
+    if (_currentGuess.isNotEmpty && !_isGameOver && !_isValidating) {
+      HapticFeedback.lightImpact();
       setState(() {
         _currentGuess = _currentGuess.substring(0, _currentGuess.length - 1);
         _errorMessage = null;
@@ -53,21 +61,40 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
     }
   }
 
-  void _submitGuess() {
+  Future<void> _submitGuess() async {
+    if (_isValidating) return;
+
     if (_currentGuess.length != _challenge.wordLength) {
+      HapticFeedback.mediumImpact();
       setState(() {
         _errorMessage = 'Word must be ${_challenge.wordLength} letters';
       });
       return;
     }
 
-    if (!_challenge.isValidWord(_currentGuess)) {
+    setState(() {
+      _isValidating = true;
+      _errorMessage = null;
+    });
+
+    // Check against the API dictionary
+    final isValid = await DictionaryService.validateWord(_currentGuess);
+
+    if (!mounted) return;
+
+    setState(() {
+      _isValidating = false;
+    });
+
+    if (!isValid && !_challenge.isValidWord(_currentGuess)) {
+      HapticFeedback.mediumImpact();
       setState(() {
         _errorMessage = 'Not a valid word';
       });
       return;
     }
 
+    HapticFeedback.selectionClick();
     setState(() {
       _guesses.add(_currentGuess);
       _errorMessage = null;
@@ -75,9 +102,11 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
       if (_currentGuess == _challenge.targetWord) {
         _hasWon = true;
         _isGameOver = true;
+        HapticFeedback.heavyImpact();
         _completeChallenge();
       } else if (_guesses.length >= _challenge.maxAttempts) {
         _isGameOver = true;
+        HapticFeedback.heavyImpact();
         // Still complete but with penalty
         _completeChallenge();
       }
@@ -88,15 +117,37 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
 
   void _completeChallenge() async {
     // Stop the alarm
-    final nativeAlarmId = int.parse(widget.alarmId.substring(0, 9));
-    await Alarm.stop(nativeAlarmId);
+    if (widget.alarmId != 'debug_alarm') {
+      try {
+        final nativeAlarmId = int.parse(widget.alarmId.substring(0, 9));
+        await Alarm.stop(nativeAlarmId);
+      } catch (e) {
+        debugPrint('Error stopping native alarm: $e');
+      }
+    }
     AlarmManagerService().dismissCurrentAlarm();
+
+    // Auto-disable non-repeating alarms
+    try {
+      final alarmRepository = ref.read(alarmRepositoryProvider);
+      final alarm = await alarmRepository.getAlarm(widget.alarmId);
+      
+      if (alarm != null) {
+        final isRepeating = alarm.repeatDays.any((day) => day);
+        if (!isRepeating && alarm.isEnabled) {
+          await alarmRepository.updateAlarm(alarm.copyWith(isEnabled: false));
+          debugPrint('Auto-disabled non-repeating alarm after wordle challenge');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error auto-disabling alarm: $e');
+    }
 
     final completionTime = DateTime.now().difference(_startTime);
     final points = _calculatePoints(completionTime);
 
     if (mounted) {
-      context.pushReplacement(
+      context.go(
         '/challenge/complete',
         extra: {
           'completionTime': completionTime.inSeconds,
@@ -158,7 +209,7 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121213),
+      backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Column(
           children: [
@@ -168,14 +219,12 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
-                    '📝 ',
-                    style: TextStyle(fontSize: 28),
-                  ),
+                  const Icon(Icons.grid_view_rounded, color: AppTheme.primary, size: 28),
+                  const SizedBox(width: 12),
                   Text(
                     'WORDLE',
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: Colors.white,
+                      color: AppTheme.textPrimary,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 4,
                     ),
@@ -184,35 +233,53 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
               ),
             ),
 
-            // Error message
-            if (_errorMessage != null)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.error.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.error.withOpacity(0.5)),
-                ),
-                child: Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold),
-                ),
-              ),
+            const Divider(color: AppTheme.surface, height: 1),
+            const SizedBox(height: 16),
 
-            const SizedBox(height: 8),
+            // Error message
+            AnimatedOpacity(
+              opacity: _errorMessage != null || _isValidating ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.textSecondary.withOpacity(0.3)),
+                ),
+                child: _isValidating
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.textPrimary,
+                        ),
+                      )
+                    : Text(
+                        _errorMessage ?? '',
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
 
             // Grid
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+                padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final itemWidth = (constraints.maxWidth - (_challenge.wordLength - 1) * 6) / _challenge.wordLength;
                     final itemHeight = itemWidth; // Square cells
                     
                     return Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.start,
                       children: List.generate(_challenge.maxAttempts, (rowIndex) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 6),
@@ -220,8 +287,9 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: List.generate(_challenge.wordLength, (colIndex) {
                               String letter = '';
-                              Color bgColor = const Color(0xFF121213);
+                              Color bgColor = Colors.transparent;
                               Color borderColor = const Color(0xFF3A3A3C);
+                              Color textColor = Colors.white;
 
                               if (rowIndex < _guesses.length) {
                                 letter = _guesses[rowIndex][colIndex];
@@ -230,6 +298,7 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
                               } else if (rowIndex == _guesses.length && colIndex < _currentGuess.length) {
                                 letter = _currentGuess[colIndex];
                                 borderColor = const Color(0xFF565758);
+                                // Pop animation effect could be added here with a separate widget
                               }
 
                               return Container(
@@ -245,9 +314,9 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
                                   child: Text(
                                     letter,
                                     style: TextStyle(
-                                      fontSize: itemHeight.clamp(30.0, 60.0) * 0.5,
+                                      fontSize: itemHeight.clamp(30.0, 60.0) * 0.6,
                                       fontWeight: FontWeight.bold,
-                                      color: Colors.white,
+                                      color: textColor,
                                     ),
                                   ),
                                 ),
@@ -264,11 +333,9 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
 
             // Keyboard
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 16.0),
               child: _buildKeyboard(),
             ),
-
-            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -285,42 +352,46 @@ class _WordleChallengeScreenState extends State<WordleChallengeScreen> {
     return Column(
       children: rows.map((row) {
         return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: row.map((key) {
               final isSpecial = key == 'ENTER' || key == '⌫';
+              final color = isSpecial ? const Color(0xFF818384) : _getKeyboardLetterColor(key);
               
               return Expanded(
                 flex: isSpecial ? 3 : 2,
-                child: GestureDetector(
-                  onTap: () {
-                    if (key == 'ENTER') {
-                      _submitGuess();
-                    } else if (key == '⌫') {
-                      _removeLetter();
-                    } else {
-                      _addLetter(key);
-                    }
-                  },
-                  child: Container(
-                    height: 50,
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    decoration: BoxDecoration(
-                      color: isSpecial ? const Color(0xFF818384) : _getKeyboardLetterColor(key),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Material(
+                    color: color,
+                    borderRadius: BorderRadius.circular(4),
+                    child: InkWell(
+                      onTap: () {
+                        if (key == 'ENTER') {
+                          _submitGuess();
+                        } else if (key == '⌫') {
+                          _removeLetter();
+                        } else {
+                          _addLetter(key);
+                        }
+                      },
                       borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Center(
-                      child: isSpecial && key == '⌫' 
-                        ? const Icon(Icons.backspace_outlined, color: Colors.white, size: 20)
-                        : Text(
-                            key,
-                            style: TextStyle(
-                              fontSize: isSpecial ? 12 : 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
+                      child: SizedBox(
+                        height: 56,
+                        child: Center(
+                          child: isSpecial && key == '⌫' 
+                            ? const Icon(Icons.backspace_outlined, color: Colors.white, size: 22)
+                            : Text(
+                                key,
+                                style: TextStyle(
+                                  fontSize: isSpecial ? 12 : 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                        ),
+                      ),
                     ),
                   ),
                 ),

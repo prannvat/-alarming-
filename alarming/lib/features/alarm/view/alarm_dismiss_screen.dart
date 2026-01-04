@@ -65,6 +65,18 @@ class _AlarmDismissScreenState extends ConsumerState<AlarmDismissScreen>
       final nativeAlarmId = int.parse(_alarm!.id.substring(0, 9));
       await Alarm.stop(nativeAlarmId);
       print('🔇 Stopped native alarm: $nativeAlarmId');
+      
+      // If alarm is not repeating (no days selected), disable it
+      final isRepeating = _alarm!.repeatDays.any((day) => day);
+      print('🔍 Alarm repeating: $isRepeating (repeatDays: ${_alarm!.repeatDays})');
+      
+      if (!isRepeating) {
+        print('🔕 One-time alarm dismissed, disabling...');
+        final repository = ref.read(alarmRepositoryProvider);
+        await repository.updateAlarm(_alarm!.copyWith(isEnabled: false));
+      } else {
+        print('🔁 Repeating alarm dismissed, will ring again on next scheduled day');
+      }
     }
     
     // Also stop via manager service (for in-app audio)

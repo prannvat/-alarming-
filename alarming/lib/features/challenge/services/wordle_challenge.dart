@@ -65,8 +65,6 @@ class WordleChallenge {
   }
 
   bool isValidWord(String word) {
-    // For simplicity, accept any 5-letter word
-    // In a real app, you'd have a full dictionary
-    return word.length == wordLength;
+    return validWords.contains(word);
   }
 }

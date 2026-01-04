@@ -15,7 +15,7 @@ class MainScaffold extends StatefulWidget {
 }
 
 class _MainScaffoldState extends State<MainScaffold> {
-  int _currentIndex = 1; // Default to Alarm tab
+  int _currentIndex = 0; // Default to Home tab
 
   @override
   void initState() {
@@ -29,10 +29,11 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 
   final List<Widget> _screens = [
-    const WorldClockScreen(),
+    const HomeScreen(),
     const AlarmsScreen(),
+    const WorldClockScreen(),
     const StopwatchScreen(),
-    const LeaderboardScreen(), // Replaced Timer with Leaderboard
+    const LeaderboardScreen(),
   ];
 
   @override
@@ -58,19 +59,23 @@ class _MainScaffoldState extends State<MainScaffold> {
         },
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.globe),
-            label: 'World Clock',
+            icon: Icon(CupertinoIcons.home),
+            label: 'Home',
           ),
           BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.alarm_fill),
             label: 'Alarm',
           ),
           BottomNavigationBarItem(
+            icon: Icon(CupertinoIcons.globe),
+            label: 'World Clock',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.stopwatch_fill),
             label: 'Stopwatch',
           ),
           BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.chart_bar_fill), // Changed icon
+            icon: Icon(CupertinoIcons.chart_bar_fill),
             label: 'Leaderboard',
           ),
         ],

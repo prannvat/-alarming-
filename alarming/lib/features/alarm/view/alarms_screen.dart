@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../challenge/providers/challenge_cooldown_provider.dart';
 import '../providers/alarm_provider.dart';
 import '../models/alarm_model.dart';
 
@@ -184,14 +185,77 @@ class AlarmsScreen extends ConsumerWidget {
                         color: alarm.isEnabled ? Colors.white : AppTheme.textSecondary,
                       ),
                     ),
-                    if (alarm.isChallenge)
-                      Text(
-                        '${alarm.challengeType?.toUpperCase()} Challenge',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppTheme.primary,
-                        ),
+                    if (alarm.isChallenge) ...[
+                      Row(
+                        children: [
+                          Text(
+                            '${alarm.challengeType?.toUpperCase()} Challenge',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Consumer(
+                            builder: (context, ref, child) {
+                              final pointsAvailableAsync = ref.watch(challengePointsAvailableProvider);
+                              
+                              return pointsAvailableAsync.when(
+                                data: (pointsAvailable) {
+                                  if (pointsAvailable) {
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.green.withOpacity(0.5),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        '🏆 Points',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.green,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    final cooldownStringAsync = ref.watch(challengeCooldownStringProvider);
+                                    return cooldownStringAsync.when(
+                                      data: (cooldownString) => Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color: Colors.orange.withOpacity(0.3),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '⏰ $cooldownString',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.orange,
+                                          ),
+                                        ),
+                                      ),
+                                      loading: () => const SizedBox.shrink(),
+                                      error: (_, __) => const SizedBox.shrink(),
+                                    );
+                                  }
+                                },
+                                loading: () => const SizedBox.shrink(),
+                                error: (_, __) => const SizedBox.shrink(),
+                              );
+                            },
+                          ),
+                        ],
                       ),
+                    ],
                   ],
                 ),
               ),
@@ -201,8 +265,8 @@ class AlarmsScreen extends ConsumerWidget {
                   final repository = ref.read(alarmRepositoryProvider);
                   repository.updateAlarm(alarm.copyWith(isEnabled: value));
                 },
-                activeColor: AppTheme.secondary,
-                activeTrackColor: AppTheme.secondary,
+                activeColor: AppTheme.primary,
+                activeTrackColor: AppTheme.primary.withOpacity(0.5),
                 inactiveThumbColor: Colors.white,
                 inactiveTrackColor: const Color(0xFF39393D),
               ),

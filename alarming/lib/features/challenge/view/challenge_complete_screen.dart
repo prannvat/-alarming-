@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:confetti/confetti.dart';
 import '../../../core/theme/app_theme.dart';
+import '../providers/challenge_cooldown_provider.dart';
 
-class ChallengeCompleteScreen extends StatefulWidget {
+class ChallengeCompleteScreen extends ConsumerStatefulWidget {
   final int completionTime;
   final int points;
   final String difficulty;
@@ -16,10 +18,10 @@ class ChallengeCompleteScreen extends StatefulWidget {
   });
 
   @override
-  State<ChallengeCompleteScreen> createState() => _ChallengeCompleteScreenState();
+  ConsumerState<ChallengeCompleteScreen> createState() => _ChallengeCompleteScreenState();
 }
 
-class _ChallengeCompleteScreenState extends State<ChallengeCompleteScreen>
+class _ChallengeCompleteScreenState extends ConsumerState<ChallengeCompleteScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
@@ -28,6 +30,9 @@ class _ChallengeCompleteScreenState extends State<ChallengeCompleteScreen>
   @override
   void initState() {
     super.initState();
+    
+    // Record challenge completion for cooldown
+    _recordCompletion();
     
     _animationController = AnimationController(
       vsync: this,
@@ -45,6 +50,14 @@ class _ChallengeCompleteScreenState extends State<ChallengeCompleteScreen>
     
     _animationController.forward();
     _confettiController.play();
+  }
+
+  Future<void> _recordCompletion() async {
+    try {
+      await ref.read(challengeCooldownServiceProvider).recordCompletion();
+    } catch (e) {
+      debugPrint('Error recording challenge completion: $e');
+    }
   }
 
   @override

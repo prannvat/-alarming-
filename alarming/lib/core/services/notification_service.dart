@@ -85,6 +85,29 @@ class NotificationService {
     _initialized = true;
   }
 
+  Future<void> showSimpleNotification({
+    required String title,
+    required String body,
+    int id = 999,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'default_channel',
+      'General Notifications',
+      channelDescription: 'General app notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const iosDetails = DarwinNotificationDetails();
+    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    await _notifications.show(
+      id,
+      title,
+      body,
+      details,
+    );
+  }
+
   Future<bool> requestPermissions() async {
     // Request iOS notification permissions
     final iosImpl = _notifications
